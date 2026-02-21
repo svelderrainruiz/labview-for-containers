@@ -1,0 +1,123 @@
+name: stabilization-2026-certification-gate
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stabilization-2026-certification-gate:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Acquire 2026 image (preflight)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $imageTag = 'nationalinstruments/labview:2026q1-windows'
+          $dockerServerOs = (& docker version --format '{{.Server.Os}}' 2>$null).Trim()
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to query Docker server mode.'
+          }
+          if ($dockerServerOs -ne 'windows') {
+            throw "Docker server mode must be windows. Current: $dockerServerOs"
+          }
+
+          & docker image inspect $imageTag > $null 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            & docker pull $imageTag
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to pull required image: $imageTag"
+            }
+          }
+
+          & docker image inspect $imageTag > $null 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Image inspect failed after acquisition: $imageTag"
+          }
+
+      - name: Run 2026 certification gate
+        id: certify
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $logRoot = "TestResults/agent-logs/stabilization-2026-gate-${{ github.run_id }}-${{ github.run_attempt }}"
+          New-Item -Path $logRoot -ItemType Directory -Force | Out-Null
+
+          & .\examples\build-your-own-image\certify-image-contract.ps1 `
+            -ContractProfile '2026-x64-throughput' `
+            -ImageTag 'nationalinstruments/labview:2026q1-windows' `
+            -RunnerTarget 'hosted-2022' `
+            -IsolationMode 'process' `
+            -MaxCliAttempts 2 `
+            -RepeatRuns 1 `
+            -LogRoot $logRoot
+
+      - name: Classify gate result
+        id: classify
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $classification = '${{ steps.certify.outputs.cert_classification }}'
+          $summaryPath = '${{ steps.certify.outputs.cert_summary_path }}'
+
+          if ([string]::IsNullOrWhiteSpace($classification)) {
+            $classification = 'verifier_execution_error'
+          }
+
+          if (-not [string]::IsNullOrWhiteSpace($summaryPath) -and (Test-Path -LiteralPath $summaryPath -PathType Leaf)) {
+            $summary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json -ErrorAction Stop
+            if (-not [string]::IsNullOrWhiteSpace([string]$summary.classification)) {
+              $classification = [string]$summary.classification
+            }
+          }
+
+          "classification=$classification" >> $env:GITHUB_OUTPUT
+          "summary_path=$summaryPath" >> $env:GITHUB_OUTPUT
+
+          @(
+            "### Stabilization 2026 Certification Gate",
+            "- Classification: $classification",
+            "- Summary path: " + ($(if ([string]::IsNullOrWhiteSpace($summaryPath)) { '<not-found>' } else { $summaryPath }))
+          ) -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - name: Assert certification evidence
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\Tooling\Assert-ImageCertificationEvidence.ps1 `
+            -SummaryPath '${{ steps.classify.outputs.summary_path }}' `
+            -ExpectedContractProfile '2026-x64-throughput' `
+            -ExpectedImageTag 'nationalinstruments/labview:2026q1-windows' `
+            -MinRepeatRuns 1
+
+      - name: Upload gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stabilization-2026-certification-gate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            TestResults/agent-logs/stabilization-2026-gate-${{ github.run_id }}-${{ github.run_attempt }}
+            builds/status/image-contract-cert-summary-*.json
+          if-no-files-found: warn
+
+      - name: Enforce pass classification
+        if: always()
+        shell: pwsh
+        run: |
+          if ('${{ steps.classify.outputs.classification }}' -ne 'pass') {
+            throw "Certification gate failed with classification: ${{ steps.classify.outputs.classification }}"
+          }
+

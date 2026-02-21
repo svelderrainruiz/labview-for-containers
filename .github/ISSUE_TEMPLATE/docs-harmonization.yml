@@ -1,0 +1,29 @@
+name: Docs Harmonization
+description: Track canonical-first docs synchronization and drift fixes.
+title: "[docs-harmonization] "
+labels:
+  - docs-harmonization
+body:
+  - type: input
+    id: canonical_source
+    attributes:
+      label: Canonical Source
+      description: Upstream canonical doc URL and ref.
+      placeholder: "https://github.com/ni/labview-for-containers/blob/main/docs/windows-custom-images.md"
+    validations:
+      required: true
+  - type: textarea
+    id: parity_target
+    attributes:
+      label: Parity Target
+      description: Required section parity and scope boundaries.
+    validations:
+      required: true
+  - type: textarea
+    id: fork_scope
+    attributes:
+      label: Fork-Specific Scope
+      description: What must remain in windows-custom-images-operations.md.
+    validations:
+      required: true
+

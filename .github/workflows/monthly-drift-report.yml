@@ -1,0 +1,139 @@
+name: Monthly Drift Report
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "45 7 1 * *"
+
+permissions:
+  contents: read
+
+jobs:
+  drift-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch NI upstream
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/ni/labview-for-containers.git || true
+          git fetch upstream main --prune
+          if ! git cat-file -e upstream/main:docs/windows-custom-images.md 2>/dev/null; then
+            echo "Expected upstream doc not found at upstream/main:docs/windows-custom-images.md"
+            exit 1
+          fi
+
+      - name: Generate drift report
+        id: drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p builds/status
+
+          python - << 'PY'
+          import json
+          import re
+          from pathlib import Path
+          import subprocess
+
+          report = {
+              "timestamp_utc": subprocess.check_output(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], text=True).strip(),
+              "docs_heading_drift": {},
+              "agents_contract_drift": {},
+              "failure_count": 0,
+          }
+
+          local_doc = Path("docs/windows-custom-images.md")
+          if not local_doc.exists():
+              raise RuntimeError("Local doc missing: docs/windows-custom-images.md")
+          upstream_doc = Path("builds/status/upstream-windows-custom-images.md")
+          upstream_doc.write_text(
+              subprocess.check_output(
+                  ["git", "show", "upstream/main:docs/windows-custom-images.md"], text=True
+              ),
+              encoding="utf-8",
+          )
+
+          def h2(path: Path):
+              txt = path.read_text(encoding="utf-8")
+              return [m.group(1).strip() for m in re.finditer(r"^##\s+(.+)$", txt, re.M)]
+
+          local_h2 = h2(local_doc)
+          upstream_h2 = h2(upstream_doc)
+          required = [
+              "Prerequisites",
+              "Important Considerations",
+              "Dockerfile Overview",
+              "How to Build the Image",
+              "Final Notes",
+              "What's next",
+          ]
+
+          missing = [x for x in required if x not in local_h2]
+          wrong_order = False
+          if not missing:
+              idx = [local_h2.index(x) for x in required]
+              wrong_order = idx != sorted(idx)
+
+          report["docs_heading_drift"] = {
+              "required_headings": required,
+              "local_h2": local_h2,
+              "upstream_h2": upstream_h2,
+              "missing_required": missing,
+              "wrong_order": wrong_order,
+          }
+          if missing or wrong_order:
+              report["failure_count"] += 1
+
+          agents = Path("AGENTS.md").read_text(encoding="utf-8")
+          required_agents_sections = [
+              "Docs Harmonization Contract",
+              "Docs Validation Checklist",
+              "Deterministic Execution Order",
+              "Evidence Contract",
+          ]
+          missing_agents = [s for s in required_agents_sections if f"## {s}" not in agents]
+          report["agents_contract_drift"] = {
+              "required_sections": required_agents_sections,
+              "missing_sections": missing_agents,
+          }
+          if missing_agents:
+              report["failure_count"] += 1
+
+          Path("builds/status/monthly-drift-report.json").write_text(
+              json.dumps(report, indent=2), encoding="utf-8"
+          )
+          PY
+
+          failures="$(jq -r '.failure_count' builds/status/monthly-drift-report.json)"
+          echo "failure_count=$failures" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Monthly Drift Report"
+            echo ""
+            echo "- Failure count: \`$failures\`"
+            echo "- Report file: \`builds/status/monthly-drift-report.json\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload drift artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-drift-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            builds/status/monthly-drift-report.json
+            builds/status/upstream-windows-custom-images.md
+          if-no-files-found: error
+
+      - name: Enforce zero drift failures
+        if: always()
+        run: |
+          if [[ "${{ steps.drift.outputs.failure_count }}" != "0" ]]; then
+            echo "Drift report detected contract failures."
+            exit 1
+          fi

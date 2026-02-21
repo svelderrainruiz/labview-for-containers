@@ -1,0 +1,39 @@
+name: 2020 Diagnostics
+description: Isolated diagnostics tracking for 2020 stabilization.
+title: "[2020-diagnostics] "
+labels:
+  - stabilization
+  - 2020-diagnostics
+body:
+  - type: textarea
+    id: freeze_guard
+    attributes:
+      label: Freeze Guard
+      description: Confirm canonical 2020 tag remains frozen.
+      placeholder: "No retag of labview-custom-windows:2020q1-windows in this issue."
+    validations:
+      required: true
+  - type: textarea
+    id: env_lane
+    attributes:
+      label: Environment Lane
+      description: Runner/OS lane used for diagnostics.
+      placeholder: "self-hosted,windows,server2019"
+    validations:
+      required: true
+  - type: textarea
+    id: diagnosis
+    attributes:
+      label: Diagnostic Findings
+      description: Classification, listener status, and error signals.
+    validations:
+      required: true
+  - type: textarea
+    id: gate
+    attributes:
+      label: Promotion Gate Status
+      description: Explicitly state whether gate is satisfied.
+      placeholder: "blocked | partial | pass"
+    validations:
+      required: true
+

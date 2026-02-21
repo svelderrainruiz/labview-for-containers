@@ -1,0 +1,107 @@
+name: Governance Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      bootstrap_mode:
+        description: Allow required-check gaps during initial repository bootstrap.
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "30 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  audit-governance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Audit governance policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_MODE: ${{ inputs.bootstrap_mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="${{ github.repository }}"
+          failures=0
+          bootstrap_mode="$(echo "${BOOTSTRAP_MODE:-false}" | tr '[:upper:]' '[:lower:]')"
+
+          has_issues="$(gh api "repos/$repo" --jq '.has_issues')"
+          if [[ "$has_issues" != "true" ]]; then
+            echo "FAIL: has_issues is not enabled."
+            failures=$((failures + 1))
+          fi
+
+          protection_json="$(gh api "repos/$repo/branches/main/protection")"
+          strict="$(echo "$protection_json" | jq -r '.required_status_checks.strict')"
+          if [[ "$strict" != "true" ]]; then
+            echo "FAIL: main branch strict status checks are not enabled."
+            failures=$((failures + 1))
+          fi
+
+          required_checks=(
+            "run-labview-cli"
+            "run-labview-cli-windows"
+            "stabilization-2026-certification-gate"
+          )
+          for check in "${required_checks[@]}"; do
+            if ! echo "$protection_json" | jq -e --arg c "$check" '.required_status_checks.contexts | index($c)' > /dev/null; then
+              if [[ "$bootstrap_mode" == "true" ]]; then
+                echo "WARN: required check missing during bootstrap mode: $check"
+              else
+                echo "FAIL: required check missing from branch protection: $check"
+                failures=$((failures + 1))
+              fi
+            fi
+          done
+
+          required_labels=(
+            "stabilization"
+            "certification"
+            "docs-harmonization"
+            "2026-throughput"
+            "2020-diagnostics"
+          )
+          labels_json="$(gh api "repos/$repo/labels?per_page=100")"
+          for label in "${required_labels[@]}"; do
+            if ! echo "$labels_json" | jq -e --arg l "$label" '.[] | select(.name == $l)' > /dev/null; then
+              echo "FAIL: missing label: $label"
+              failures=$((failures + 1))
+            fi
+          done
+
+          required_templates=(
+            ".github/ISSUE_TEMPLATE/stabilization.yml"
+            ".github/ISSUE_TEMPLATE/certification.yml"
+            ".github/ISSUE_TEMPLATE/docs-harmonization.yml"
+            ".github/ISSUE_TEMPLATE/throughput-2026.yml"
+            ".github/ISSUE_TEMPLATE/diagnostics-2020.yml"
+            ".github/ISSUE_TEMPLATE/config.yml"
+          )
+          for template in "${required_templates[@]}"; do
+            if [[ ! -f "$template" ]]; then
+              echo "FAIL: missing issue template/config file: $template"
+              failures=$((failures + 1))
+            fi
+          done
+
+          {
+            echo "### Governance Audit"
+            echo ""
+            echo "- Repository: \`$repo\`"
+            echo "- Bootstrap mode: \`$bootstrap_mode\`"
+            echo "- Issues enabled: \`$has_issues\`"
+            echo "- Strict checks on main: \`$strict\`"
+            echo "- Failures: \`$failures\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$failures" -gt 0 ]]; then
+            exit 1
+          fi

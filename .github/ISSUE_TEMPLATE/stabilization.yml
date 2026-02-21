@@ -1,0 +1,35 @@
+name: Stabilization Work Item
+description: Track deterministic stabilization work and acceptance gates.
+title: "[stabilization] "
+labels:
+  - stabilization
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Short statement of the stabilization goal.
+    validations:
+      required: true
+  - type: textarea
+    id: deterministic_step
+    attributes:
+      label: Next Deterministic Step
+      description: Single highest-value step that can be executed now.
+    validations:
+      required: true
+  - type: textarea
+    id: gate
+    attributes:
+      label: Acceptance Gate
+      description: Machine-checkable pass criteria.
+      placeholder: "Example: two consecutive pass runs on same SHA with complete summary artifacts."
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence Links
+      description: Run URLs, artifact paths, and summary files.
+      placeholder: "GitHub Actions run URLs, builds/status/*.json, TestResults paths."
+

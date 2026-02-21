@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+contact_links:
+  - name: NI Canonical Upstream
+    url: https://github.com/ni/labview-for-containers
+    about: Report canonical product issues to the upstream NI repository when appropriate.
+

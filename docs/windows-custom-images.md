@@ -7,6 +7,8 @@ Use this approach if you need to:
 - Include custom scripts or test frameworks
 - Configure a Windows-based CI/CD environment where LabVIEW runs headlessly inside a Windows container
 
+For fork-specific operational runbooks (2026 throughput gating, 2020 stabilization, certification policy), see [Windows Custom Images Operations (Fork)](./windows-custom-images-operations.md).
+
 ## Table of Contents
 - [Prerequisites](#prerequisites)
 - [Important Considerations](#important-considerations)
@@ -165,3 +167,4 @@ Before you finish, keep the following important points in mind:
 - Learn how to use the official prebuilt images: [Using the Prebuilt Images](./use-prebuilt-image.md)
 - Review Windows container behavior and requirements: [Windows Prebuilt Images](./windows-prebuilt.md)
 - Explore CI/CD integration patterns and LabVIEWCLI usage: [Examples](./examples.md)
+- Use fork-specific stabilization and promotion runbooks: [Windows Custom Images Operations](./windows-custom-images-operations.md)

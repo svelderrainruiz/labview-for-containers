@@ -1,0 +1,46 @@
+name: Certification Execution
+description: Track image-contract certification executions and outcomes.
+title: "[certification] "
+labels:
+  - certification
+body:
+  - type: input
+    id: contract_profile
+    attributes:
+      label: Contract Profile
+      description: Profile name from Tooling/image-contract-profiles.json
+      placeholder: "2026-x64-throughput"
+    validations:
+      required: true
+  - type: input
+    id: image_tag
+    attributes:
+      label: Image Tag
+      description: Image under certification.
+      placeholder: "nationalinstruments/labview:2026q1-windows"
+    validations:
+      required: true
+  - type: input
+    id: runner_target
+    attributes:
+      label: Runner Target
+      description: hosted-2022 or self-hosted-server2019.
+      placeholder: "hosted-2022"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Classification
+      description: Expected outcome and why.
+      placeholder: "pass for 2026 throughput, environment_incompatible for non-2019 2020 runs, etc."
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Include cert-summary path and run URLs.
+    validations:
+      required: true
+

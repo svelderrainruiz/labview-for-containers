@@ -1,0 +1,30 @@
+name: 2026 Throughput
+description: Track 2026-first throughput execution and repeatability.
+title: "[2026-throughput] "
+labels:
+  - stabilization
+  - 2026-throughput
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: Immediate throughput objective.
+      placeholder: "Two consecutive hosted certification passes on same SHA."
+    validations:
+      required: true
+  - type: textarea
+    id: gate
+    attributes:
+      label: Throughput Gate
+      description: Deterministic pass criteria.
+    validations:
+      required: true
+  - type: textarea
+    id: runs
+    attributes:
+      label: Run Evidence
+      description: Link run #1 and run #2 and summary artifacts.
+    validations:
+      required: true
+
