@@ -106,7 +106,26 @@ For every non-trivial run, persist:
 - Treat this org repository as the integration control plane for stabilization decisions.
 - Keep `main` upstream-synced and protected; use stabilization branches for active work.
 - Use `sync/upstream-*` branches for upstream conflicts and resolve through PR.
-- Keep personal-fork repositories as incubation/shadow lanes only during active migration windows.
+- Keep personal-fork repositories as read-only mirrors for history/reference only.
+- Record acceptance decisions and evidence in this org repository issues/PRs.
+
+## Org Source-of-Truth and Mirror Policy
+- Source-of-truth for active execution and acceptance is `LabVIEW-Community-CI-CD/labview-for-containers`.
+- Sandbox/personal forks are not approval surfaces once migration is declared complete.
+- If a sandbox issue still exists, add a migration comment that points to the org issue and keep the sandbox thread informational only.
+
+## Upstream Sync Runbook Contract
+- Use `.github/workflows/upstream-sync.yml` for all NI upstream ingestion.
+- Sync mode defaults to PR proposal (`propose-pr`); direct push to `main` is prohibited.
+- Persist machine-readable summaries under `builds/status/upstream-sync-summary-*.json`.
+- Classification outcomes are authoritative:
+  - `in_sync`
+  - `behind_requires_sync_pr`
+  - `sync_pr_opened`
+  - `sync_pr_updated`
+  - `conflict_requires_pr`
+  - `execution_error`
+- On `conflict_requires_pr` or `execution_error`, post/update tracking issue evidence.
 
 ## Docs Harmonization Contract
 - Keep `docs/windows-custom-images.md` canonical-first and aligned to NI structure.
@@ -132,6 +151,7 @@ For every non-trivial run, persist:
 - `docs/windows-custom-images.md`
 - `docs/windows-custom-images-operations.md`
 - `docs/org-integration-hub.md`
+- `docs/upstream-sync.md`
 - `docs/image-contract-incident-response.md`
 - `docs/faqs.md`
 - `.github/workflows/labview-image-contract-certification.yml`

@@ -1,0 +1,357 @@
+name: Upstream Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: Upstream ref to sync from (branch, tag, or SHA).
+        required: true
+        default: main
+        type: string
+      sync_mode:
+        description: Detect-only reports state; propose-pr creates/updates sync PRs.
+        required: true
+        default: propose-pr
+        type: choice
+        options:
+          - detect-only
+          - propose-pr
+      pr_base:
+        description: Protected base branch for sync PRs.
+        required: true
+        default: main
+        type: string
+      sync_branch_prefix:
+        description: Prefix for automation branches.
+        required: true
+        default: sync/upstream
+        type: string
+      dry_run:
+        description: Evaluate and classify without pushing branches or creating PRs.
+        required: true
+        default: false
+        type: boolean
+  schedule:
+    - cron: "17 5 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Evaluate sync and classify
+        id: sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_REF: ${{ github.event.inputs.upstream_ref }}
+          SYNC_MODE: ${{ github.event.inputs.sync_mode }}
+          PR_BASE: ${{ github.event.inputs.pr_base }}
+          SYNC_BRANCH_PREFIX: ${{ github.event.inputs.sync_branch_prefix }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          TRACKING_ISSUE: ${{ vars.UPSTREAM_SYNC_TRACKING_ISSUE || '4' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p builds/status
+
+          # Defaults for scheduled runs (workflow_dispatch inputs are empty there).
+          upstream_ref="${UPSTREAM_REF:-main}"
+          sync_mode="${SYNC_MODE:-propose-pr}"
+          pr_base="${PR_BASE:-main}"
+          sync_branch_prefix="${SYNC_BRANCH_PREFIX:-sync/upstream}"
+          dry_run="$(echo "${DRY_RUN:-false}" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$dry_run" != "true" ]]; then
+            dry_run="false"
+          fi
+          tracking_issue="${TRACKING_ISSUE:-4}"
+
+          timestamp_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          file_stamp="$(date -u +%Y%m%d-%H%M%S)"
+          summary_path="builds/status/upstream-sync-summary-${file_stamp}.json"
+
+          repo="${GITHUB_REPOSITORY}"
+          owner="${repo%%/*}"
+          safe_ref="$(echo "$upstream_ref" | tr '/:@' '---' | tr -cd 'A-Za-z0-9._-')"
+          if [[ -z "$safe_ref" ]]; then
+            safe_ref="main"
+          fi
+          sync_branch="${sync_branch_prefix}-${safe_ref}"
+
+          classification="execution_error"
+          note=""
+          error_message=""
+          base_sha=""
+          upstream_sha=""
+          merge_base_sha=""
+          pr_number=""
+          pr_url=""
+
+          update_or_create_pr() {
+            local title="$1"
+            local body="$2"
+            local desired_classification="$3"
+
+            local existing
+            local existing_number
+            local existing_url
+
+            existing="$(gh pr list \
+              --repo "$repo" \
+              --state open \
+              --base "$pr_base" \
+              --head "$owner:$sync_branch" \
+              --limit 1 \
+              --json number,url)"
+
+            existing_number="$(echo "$existing" | jq -r '.[0].number // empty')"
+            existing_url="$(echo "$existing" | jq -r '.[0].url // empty')"
+
+            if [[ -z "$existing_number" ]]; then
+              pr_url="$(gh pr create \
+                --repo "$repo" \
+                --base "$pr_base" \
+                --head "$sync_branch" \
+                --title "$title" \
+                --body "$body")"
+              pr_number="$(echo "$pr_url" | sed -E 's#.*/pull/([0-9]+).*#\1#')"
+              classification="sync_pr_opened"
+              if [[ "$desired_classification" == "conflict_requires_pr" ]]; then
+                classification="conflict_requires_pr"
+              fi
+              note="Opened sync PR #$pr_number."
+            else
+              pr_number="$existing_number"
+              pr_url="$existing_url"
+              gh pr edit "$pr_number" --repo "$repo" --title "$title" --body "$body"
+              classification="sync_pr_updated"
+              if [[ "$desired_classification" == "conflict_requires_pr" ]]; then
+                classification="conflict_requires_pr"
+              fi
+              note="Updated existing sync PR #$pr_number."
+            fi
+          }
+
+          run_sync() {
+            git remote add upstream https://github.com/ni/labview-for-containers.git 2>/dev/null || \
+              git remote set-url upstream https://github.com/ni/labview-for-containers.git
+
+            git fetch origin "$pr_base" --prune
+            git fetch upstream "$upstream_ref" --prune
+
+            base_sha="$(git rev-parse "origin/$pr_base")"
+            upstream_sha="$(git rev-parse "upstream/$upstream_ref")"
+            merge_base_sha="$(git merge-base "$base_sha" "$upstream_sha")"
+
+            if [[ "$base_sha" == "$upstream_sha" ]]; then
+              classification="in_sync"
+              note="origin/$pr_base matches upstream/$upstream_ref."
+              return 0
+            fi
+
+            if git merge-base --is-ancestor "$base_sha" "$upstream_sha"; then
+              if [[ "$sync_mode" == "detect-only" || "$dry_run" == "true" ]]; then
+                classification="behind_requires_sync_pr"
+                note="origin/$pr_base is behind upstream/$upstream_ref."
+                return 0
+              fi
+
+              git checkout -B "$sync_branch" "$upstream_sha"
+              git push origin "$sync_branch" --force
+
+              pr_title="Sync upstream $upstream_ref -> $pr_base (${upstream_sha:0:7})"
+              pr_body=$(cat <<EOF
+          Automated upstream sync proposal.
+
+          - upstream ref: \`$upstream_ref\`
+          - upstream sha: \`$upstream_sha\`
+          - base branch: \`$pr_base\`
+          - base sha before sync: \`$base_sha\`
+          - classification: \`sync_pr_updated\`
+          EOF
+              )
+              update_or_create_pr "$pr_title" "$pr_body" "sync_pr_updated"
+              return 0
+            fi
+
+            classification="conflict_requires_pr"
+            note="origin/$pr_base and upstream/$upstream_ref are divergent (non-fast-forward)."
+
+            if [[ "$sync_mode" == "detect-only" || "$dry_run" == "true" ]]; then
+              return 0
+            fi
+
+            git checkout -B "$sync_branch" "$upstream_sha"
+            git push origin "$sync_branch" --force
+
+            pr_title="Resolve upstream divergence: $upstream_ref -> $pr_base (${upstream_sha:0:7})"
+            pr_body=$(cat <<EOF
+          Automated divergence sync proposal.
+
+          - upstream ref: \`$upstream_ref\`
+          - upstream sha: \`$upstream_sha\`
+          - base branch: \`$pr_base\`
+          - base sha before sync: \`$base_sha\`
+          - classification: \`conflict_requires_pr\`
+
+          This lane is non-fast-forward and requires manual resolution in a PR.
+          EOF
+            )
+            update_or_create_pr "$pr_title" "$pr_body" "conflict_requires_pr"
+            return 0
+          }
+
+          set +e
+          run_sync
+          sync_rc=$?
+          set -e
+
+          if [[ "$sync_rc" -ne 0 ]]; then
+            classification="execution_error"
+            error_message="Sync execution failed with exit code $sync_rc."
+            note="Inspect workflow logs for failing command context."
+          fi
+
+          jq -n \
+            --arg schema_version "1.0" \
+            --arg generated_utc "$timestamp_utc" \
+            --arg repository "$repo" \
+            --arg upstream_ref "$upstream_ref" \
+            --arg pr_base "$pr_base" \
+            --arg sync_mode "$sync_mode" \
+            --argjson dry_run "$(if [[ "$dry_run" == "true" ]]; then echo true; else echo false; fi)" \
+            --arg classification "$classification" \
+            --arg base_sha "$base_sha" \
+            --arg upstream_sha "$upstream_sha" \
+            --arg merge_base_sha "$merge_base_sha" \
+            --arg sync_branch "$sync_branch" \
+            --arg pr_number "$pr_number" \
+            --arg pr_url "$pr_url" \
+            --arg note "$note" \
+            --arg error_message "$error_message" \
+            '{
+              schema_version: $schema_version,
+              generated_utc: $generated_utc,
+              repository: $repository,
+              upstream_ref: $upstream_ref,
+              pr_base: $pr_base,
+              sync_mode: $sync_mode,
+              dry_run: $dry_run,
+              classification: $classification,
+              base_sha: (if $base_sha == "" then null else $base_sha end),
+              upstream_sha: (if $upstream_sha == "" then null else $upstream_sha end),
+              merge_base_sha: (if $merge_base_sha == "" then null else $merge_base_sha end),
+              sync_branch: (if $sync_branch == "" then null else $sync_branch end),
+              pr_number: (if $pr_number == "" then null else ($pr_number | tonumber) end),
+              pr_url: (if $pr_url == "" then null else $pr_url end),
+              note: (if $note == "" then null else $note end),
+              error_message: (if $error_message == "" then null else $error_message end)
+            }' > "$summary_path"
+
+          {
+            echo "classification=$classification"
+            echo "summary_path=$summary_path"
+            echo "sync_branch=$sync_branch"
+            echo "pr_number=$pr_number"
+            echo "pr_url=$pr_url"
+            echo "tracking_issue=$tracking_issue"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Upstream Sync"
+            echo ""
+            echo "- Classification: \`$classification\`"
+            echo "- Upstream ref: \`$upstream_ref\`"
+            echo "- Base branch: \`$pr_base\`"
+            echo "- Sync mode: \`$sync_mode\`"
+            echo "- Dry run: \`$dry_run\`"
+            echo "- Base SHA: \`${base_sha:-n/a}\`"
+            echo "- Upstream SHA: \`${upstream_sha:-n/a}\`"
+            echo "- Sync branch: \`$sync_branch\`"
+            if [[ -n "$pr_url" ]]; then
+              echo "- PR: $pr_url"
+            fi
+            if [[ -n "$note" ]]; then
+              echo "- Note: $note"
+            fi
+            if [[ -n "$error_message" ]]; then
+              echo "- Error: $error_message"
+            fi
+            echo "- Summary JSON: \`$summary_path\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify tracking issue on conflict or execution error
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLASSIFICATION: ${{ steps.sync.outputs.classification }}
+          TRACKING_ISSUE: ${{ steps.sync.outputs.tracking_issue }}
+          SUMMARY_PATH: ${{ steps.sync.outputs.summary_path }}
+          SYNC_BRANCH: ${{ steps.sync.outputs.sync_branch }}
+          PR_URL: ${{ steps.sync.outputs.pr_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CLASSIFICATION" != "conflict_requires_pr" && "$CLASSIFICATION" != "execution_error" ]]; then
+            exit 0
+          fi
+
+          if [[ -z "${TRACKING_ISSUE:-}" ]]; then
+            exit 0
+          fi
+
+          summary_json="$(cat "$SUMMARY_PATH")"
+          base_sha="$(echo "$summary_json" | jq -r '.base_sha // "n/a"')"
+          upstream_sha="$(echo "$summary_json" | jq -r '.upstream_sha // "n/a"')"
+          note="$(echo "$summary_json" | jq -r '.note // "n/a"')"
+          error_msg="$(echo "$summary_json" | jq -r '.error_message // "n/a"')"
+
+          body=$(cat <<EOF
+          Upstream sync classification: \`$CLASSIFICATION\`
+
+          - Base SHA: \`$base_sha\`
+          - Upstream SHA: \`$upstream_sha\`
+          - Sync branch: \`$SYNC_BRANCH\`
+          - PR URL: ${PR_URL:-n/a}
+          - Summary JSON: \`$SUMMARY_PATH\`
+          - Note: $note
+          - Error: $error_msg
+          EOF
+          )
+          gh issue comment "$TRACKING_ISSUE" --repo "${{ github.repository }}" --body "$body"
+
+      - name: Upload sync summary artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-sync-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: builds/status/upstream-sync-summary-*.json
+          if-no-files-found: error
+
+      - name: Fail on execution error classification
+        if: always()
+        shell: bash
+        run: |
+          if [[ "${{ steps.sync.outputs.classification }}" == "execution_error" ]]; then
+            echo "Upstream sync failed with execution_error classification."
+            exit 1
+          fi

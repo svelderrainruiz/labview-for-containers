@@ -96,13 +96,17 @@ jobs:
               "Docs Validation Checklist",
               "Deterministic Execution Order",
               "Evidence Contract",
+              "Org Source-of-Truth and Mirror Policy",
+              "Upstream Sync Runbook Contract",
           ]
           missing_agents = [s for s in required_agents_sections if f"## {s}" not in agents]
+          upstream_sync_doc = Path("docs/upstream-sync.md")
           report["agents_contract_drift"] = {
               "required_sections": required_agents_sections,
               "missing_sections": missing_agents,
+              "upstream_sync_doc_exists": upstream_sync_doc.exists(),
           }
-          if missing_agents:
+          if missing_agents or not upstream_sync_doc.exists():
               report["failure_count"] += 1
 
           Path("builds/status/monthly-drift-report.json").write_text(

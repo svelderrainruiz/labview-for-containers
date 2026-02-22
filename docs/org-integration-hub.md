@@ -24,16 +24,22 @@ Sandbox/incubation work remains:
 - Pull requests must be up-to-date with `main`.
 - Required checks enforce regression and certification gates.
 - Issue tracking and acceptance decisions happen in this org repository.
+- Sandbox/personal forks are read-only mirrors once migration is declared complete.
 
 ## Upstream Sync Policy
 
 - Scheduled daily sync plus manual dispatch via
-  `.github/workflows/upstream-main-sync.yml`.
+  `.github/workflows/upstream-sync.yml`.
 - Sync outcomes:
   - `in_sync`
-  - `fast_forwarded`
+  - `behind_requires_sync_pr`
+  - `sync_pr_opened`
+  - `sync_pr_updated`
   - `conflict_requires_pr`
-- On conflict, automation opens `sync/upstream-<timestamp>` PR with context.
+  - `execution_error`
+- Sync automation is PR-only and never pushes directly to `main`.
+- Runbook and input contract:
+  [Upstream Sync Runbook](./upstream-sync.md).
 
 ## Delivery Policy
 

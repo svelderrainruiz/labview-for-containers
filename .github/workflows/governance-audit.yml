@@ -46,6 +46,12 @@ jobs:
             failures=$((failures + 1))
           fi
 
+          conversation_required="$(echo "$protection_json" | jq -r '.required_conversation_resolution.enabled')"
+          if [[ "$conversation_required" != "true" ]]; then
+            echo "FAIL: required conversation resolution is not enabled on main."
+            failures=$((failures + 1))
+          fi
+
           required_checks=(
             "run-labview-cli"
             "run-labview-cli-windows"
@@ -99,6 +105,7 @@ jobs:
             echo "- Bootstrap mode: \`$bootstrap_mode\`"
             echo "- Issues enabled: \`$has_issues\`"
             echo "- Strict checks on main: \`$strict\`"
+            echo "- Conversation resolution required: \`$conversation_required\`"
             echo "- Failures: \`$failures\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
