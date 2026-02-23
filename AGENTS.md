@@ -158,3 +158,14 @@ For every non-trivial run, persist:
 - `examples/build-your-own-image/certify-image-contract.ps1`
 - `examples/build-your-own-image/verify-lv-cli-masscompile-from-image.ps1`
 - `examples/build-your-own-image/build-windows-lv2020x64-resumable.ps1`
+
+## Workspace Governance Alignment
+- Parent authority: `C:\dev\AGENTS.md`
+- Manifest source of truth: `C:\dev\workspace-governance.json`
+
+## Branch Protection Gate
+- Governed default branch: `svelderrainruiz/labview-for-containers-org:main`
+- Required status checks include `Governance Contract`.
+
+## GitHub CLI Pin
+- Required direct `gh` repo pin for fork operations: `-R svelderrainruiz/labview-for-containers-org`.
